@@ -26,3 +26,14 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+.mcp.json
+AGENTS.md
+boost.json
+CLAUDE.md
+GEMINI.md
+.agents/skills/inertia-vue-development/SKILL.md
+.agents/skills/pest-testing/SKILL.md
+.agents/skills/tailwindcss-development/SKILL.md
+.agents/skills/wayfinder-development/SKILL.md
+.claude/skills/inertia-vue-development/SKILL.md
+.claude/skills/pest-testing/SKILL.md
