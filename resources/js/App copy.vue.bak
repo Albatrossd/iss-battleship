@@ -1,0 +1,208 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+
+const ROWS = 18
+const COLS = 36
+
+const loading = ref(true)
+const error = ref('')
+const round = ref(null)
+const bets = ref([]) // array of {row, col, ...}
+const placing = ref(false)
+
+const lastBetKey = 'iss_last_bet'
+const lastBet = ref(null)
+
+function loadLastBet() {
+  try {
+    const raw = localStorage.getItem(lastBetKey)
+    lastBet.value = raw ? JSON.parse(raw) : null
+  } catch {
+    lastBet.value = null
+  }
+}
+
+function saveLastBet(roundId, row, col) {
+  lastBet.value = { roundId, row, col }
+  localStorage.setItem(lastBetKey, JSON.stringify(lastBet.value))
+}
+
+function rowLabel(r) {
+  // 0 -> A
+  return String.fromCharCode('A'.charCodeAt(0) + r)
+}
+
+const counts = computed(() => {
+  // counts[row][col] = number of bets in that cell
+  const grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0))
+  for (const b of bets.value) {
+    const r = Number(b.row)
+    const c = Number(b.col)
+    if (Number.isInteger(r) && Number.isInteger(c) && r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+      grid[r][c]++
+    }
+  }
+  return grid
+})
+
+async function fetchJson(url, options = {}) {
+  const res = await fetch(url, {
+    headers: {
+      'Accept': 'application/json',
+      ...(options.headers || {}),
+    },
+    ...options,
+  })
+
+  // If Laravel returns a validation error, it’ll be JSON with 422.
+  const contentType = res.headers.get('content-type') || ''
+  const data = contentType.includes('application/json') ? await res.json() : await res.text()
+
+  if (!res.ok) {
+    const message =
+      typeof data === 'string'
+        ? data
+        : (data?.message || JSON.stringify(data))
+    throw new Error(`${res.status} ${res.statusText}: ${message}`)
+  }
+
+  return data
+}
+
+async function loadRoundAndBoard() {
+  loading.value = true
+  error.value = ''
+  try {
+    const r = await fetchJson('/api/rounds/current')
+    round.value = r
+
+    // board endpoint
+    const board = await fetchJson(`/api/rounds/${r.id}/board`)
+    // Expecting { round: ..., bets: [...] }
+    bets.value = board.bets || []
+  } catch (e) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function placeBet(row, col) {
+  if (!round.value?.id) return
+  placing.value = true
+  error.value = ''
+  try {
+    await fetchJson(`/api/rounds/${round.value.id}/bets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row, col }),
+    })
+
+    // re-fetch board so the UI updates
+    const board = await fetchJson(`/api/rounds/${round.value.id}/board`)
+    bets.value = board.bets || []
+  } catch (e) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    placing.value = false
+    saveLastBet(round.value.id, row, col)
+  }
+}
+
+onMounted(() => {
+     loadLastBet()
+  loadRoundAndBoard()
+})
+function isLastBetCell(row, col) {
+  return lastBet.value
+    && lastBet.value.roundId === round.value?.id
+    && lastBet.value.row === row
+    && lastBet.value.col === col
+}
+</script>
+
+<template>
+  <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px;">
+    <h1 style="margin: 0 0 8px;">ISS Battleship</h1>
+
+    <div v-if="loading">Loading…</div>
+    <div v-else>
+      <div v-if="error" style="background: #ffe3e3; padding: 10px; border-radius: 8px; margin-bottom: 12px;">
+        <strong>Error:</strong> {{ error }}
+      </div>
+
+      <div style="display:flex; gap: 16px; align-items: center; margin-bottom: 12px;">
+        <div>
+          <div><strong>Round:</strong> {{ round?.id ?? '—' }}</div>
+          <div style="opacity: 0.75; font-size: 13px;">
+            Click a cell to place a bet. ({{ ROWS }}×{{ COLS }})
+          </div>
+        </div>
+
+        <button
+          @click="loadRoundAndBoard"
+          :disabled="placing"
+          style="padding: 8px 12px; border-radius: 8px; border: 1px solid #ccc; background: white; cursor: pointer;"
+        >
+          Refresh
+        </button>
+
+        <div v-if="placing" style="opacity: 0.75;">Placing bet…</div>
+      </div>
+
+      <!-- Grid -->
+      <div style="overflow: auto; border: 1px solid #ddd; border-radius: 10px; padding: 10px;">
+        <div
+          style="display:grid;"
+          :style="{
+            gridTemplateColumns: `40px repeat(${COLS}, 26px)`,
+            gap: '4px',
+            alignItems: 'center'
+          }"
+        >
+          <!-- top-left corner blank -->
+          <div></div>
+
+          <!-- column headers -->
+          <div
+            v-for="c in COLS"
+            :key="'h'+c"
+            style="text-align:center; font-size: 12px; opacity: 0.75;"
+          >
+            {{ c }}
+          </div>
+
+          <!-- rows -->
+          <template v-for="r in ROWS" :key="'row'+r">
+            <!-- row header -->
+            <div style="text-align:right; padding-right: 6px; font-size: 12px; opacity: 0.75;">
+              {{ rowLabel(r-1) }}
+            </div>
+
+            <!-- cells -->
+<button
+  v-for="c in COLS"
+  :key="`cell-${r-1}-${c-1}`"
+  @click="placeBet(r-1, c-1)"
+  :disabled="placing"
+  :title="`${rowLabel(r-1)}${c} — Bets: ${counts[r-1][c-1]}`"
+  :style="{
+    width: '26px',
+    height: '26px',
+    borderRadius: '6px',
+    border: isLastBetCell(r-1, c-1) ? '2px solid #111' : '1px solid #ccc',
+    background: isLastBetCell(r-1, c-1) ? '#f3f3f3' : 'white',
+    cursor: placing ? 'not-allowed' : 'pointer',
+    fontSize: '12px',
+    lineHeight: '1',
+    padding: 0,
+  }"
+>
+  <span v-if="counts[r-1][c-1] > 0">{{ counts[r-1][c-1] }}</span>
+</button>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
